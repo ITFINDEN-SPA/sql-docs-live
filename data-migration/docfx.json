@@ -1,0 +1,46 @@
+{
+  "build": {
+    "content": [
+      {
+        "files": [
+          "**/*.md",
+          "**/*.yml",
+          "breadcrumb/toc.yml"
+        ],
+        "exclude": [
+          "**/includes/**",
+          "**/mref/**",
+          "**/obj/**",
+          "README.md",
+          "LICENSE",
+          "LICENSE-CODE"
+        ]
+      }
+    ],
+    "resource": [
+      {
+        "files": [
+          "**/*.png",
+          "**/*.jpg",
+          "**/*.gif",
+          "**/*.svg"
+        ],
+        "exclude": [
+          "**/obj/**"
+        ]
+      }
+    ],
+    "overwrite": [],
+    "externalReference": [],
+    "globalMetadata": {
+      "breadcrumb_path": "/data-migration/breadcrumb/toc.json",
+      "extendBreadcrumb": true,
+      "feedback_system": "Standard",
+      "uhfHeaderId": "Azure"
+    },
+    "fileMetadata": {},
+    "template": [],
+    "dest": "data-migration",
+    "markdownEngineName": "markdig"
+  }
+}

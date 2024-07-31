@@ -1,0 +1,224 @@
+---
+title: "Move report server databases to another computer (native mode)"
+description: "Learn how to move the report server databases that are used in an installation of SQL Server Database Engine. Specifically, learn how to move them to an instance that is on a different computer."
+author: maggiesMSFT
+ms.author: maggies
+ms.date: 12/16/2019
+ms.service: reporting-services
+ms.subservice: report-server
+ms.topic: conceptual
+ms.custom: updatefrequency5
+---
+
+# Moving report server databases to another computer (SSRS native mode)
+
+  You can move the report server databases that are used in an installation of [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] [!INCLUDE[ssDE](../../includes/ssde-md.md)] to an instance that is on a different computer. Both the `reportserver` and `reportservertempdb` databases must be moved or copied together. A [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] installation requires both databases. You must relate the `reportservertempdb` database by name to the primary `reportserver` database you're moving.  
+  
+ [!INCLUDE[applies](../../includes/applies-md.md)]  [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Native mode.  
+  
+ Moving a database doesn't change scheduled operations that are currently defined for report server items.  
+  
+-   Schedules are recreated the first time that you restart the Report Server service.  
+  
+-   [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] Agent jobs that are used to trigger a schedule are recreated on the new database instance. You don't have to move the jobs to the new computer, but you might want to delete jobs on the computer that are no longer used.  
+  
+-   Subscriptions, cached reports, and snapshots are preserved in the moved database. If a snapshot isn't picking up refreshed data after the database is moved, clear the snapshot options. Then, select **Apply** to save your changes, re-create the schedule, and select **Apply** again to save your changes.  
+  
+-   Temporary report and user session data that is stored in `reportservertempdb` are persisted when you move that database.  
+  
+ [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] provides several approaches for moving databases, including backup and restore, attach and detach, and copy. Not all approaches are appropriate for relocating an existing database to a new server instance. The approach that you should use to move the report server database varies depending on your system availability requirements. The easiest way to move the report server databases is to attach and detach them. However, this approach requires that you take the report server offline while you detach the database. Backup and restore actions are a better choice if you want to minimize service disruptions, but you must run [!INCLUDE[tsql](../../includes/tsql-md.md)] commands to perform the operations. Copying the database isn't recommended, specifically by using the Copy Database Wizard. It doesn't preserve permission settings in the database.  
+  
+> [!IMPORTANT]  
+>  The steps provided in this article are recommended when relocation of the report server database is the only change you are making to the existing installation. Migrating an entire [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] installation requires connection reconfiguration and an encryption key reset. For example, this configuration is required when moving the database and changing the identity of the Report Server Windows service that uses the database.
+  
+## Detach and attach the report server databases  
+ If you can take the report server offline, you can detach the databases to move them to the [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] instance you want to use. This approach preserves permissions in the databases. If you're using a SQL Server database, you must move it to another SQL Server instance. After you move the databases, you must reconfigure the report server connection to the report server database. If you're running a scale-out deployment, you must reconfigure the report server database connection for each report server in the deployment.  
+  
+ Use the following steps to move the databases:  
+  
+1.  Back up the encryption keys for the report server database you want to move. You can use the [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Configuration tool to back up the keys.  
+  
+1.  Stop the Report Server service. You can use the [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Configuration tool to stop the service.  
+  
+1.  Start [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] [!INCLUDE[ssManStudio](../../includes/ssmanstudio-md.md)] and open a connection to the [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] instance that hosts the report server databases.  
+  
+1.  Right-click the report server database, point to **Tasks**, and select **Detach**. Repeat this step for the report server temporary database.  
+  
+1.  Copy or move the .mdf and .ldf files to the **Data** folder of the [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] instance you want to use. Because you're moving two databases, make sure that you move or copy all four files.  
+  
+1.  In [!INCLUDE[ssManStudio](../../includes/ssmanstudio-md.md)], open a connection to the new [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] instance that hosts the report server databases.  
+  
+1.  Right-click the Databases node, and then select **Attach**.  
+  
+1.  Select **Add** to select the report server database .mdf and .ldf files that you want to attach. Repeat this step for the report server temporary database.  
+  
+1. After the databases are attached, verify that the **RSExecRole** is a database role in the report server database and temporary database. **RSExecRole** must have select, insert, update, delete, and reference permissions on the report server database tables, and execute permissions on the stored procedures. For more information, see [Create the RSExecRole](../../reporting-services/security/create-the-rsexecrole.md).  
+  
+1. Start the [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Configuration tool and open a connection to the report server.  
+  
+1. On the Database page, select the new [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] instance, and then select **Connect**.  
+  
+1. Choose the report server database that you just moved, and then select **Apply**.  
+  
+1. On the **Encryption Keys** page, select **Restore**. Specify the file that contains the backup copy of the keys and the password to unlock the file.  
+  
+1. Restart the Report Server service.  
+  
+## Back up and restore the report server databases  
+ If you can't take the report server offline, you can use backup and restore to relocate the report server databases. You must use [!INCLUDE[tsql](../../includes/tsql-md.md)] statements to do the backup and restore. After you restore the databases, you must configure the report server to use the database on the new server instance. For more information, see the instructions at the end of this article.  
+  
+### Use BACKUP and COPY_ONLY to back up the report server databases  
+ When backing up the databases, set the `COPY_ONLY` argument. Be sure to back up both of the databases and log files.  
+  
+```  
+-- To permit log backups, before the full database backup, alter the database   
+-- to use the full recovery model.  
+USE master;  
+GO  
+ALTER DATABASE ReportServer  
+   SET RECOVERY FULL  
+  
+-- If the ReportServerData device does not exist yet, create it.   
+USE master  
+GO  
+EXEC sp_addumpdevice 'disk', 'ReportServerData',   
+'C:\Program Files\Microsoft SQL Server\MSSQL13.MSSQLSERVER\MSSQL\BACKUP\ReportServerData.bak'  
+  
+-- Create a logical backup device, ReportServerLog.  
+USE master  
+GO  
+EXEC sp_addumpdevice 'disk', 'ReportServerLog',   
+'C:\Program Files\Microsoft SQL Server\MSSQL13.MSSQLSERVER\MSSQL\BACKUP\ReportServerLog.bak'  
+  
+-- Back up the full ReportServer database.  
+BACKUP DATABASE ReportServer  
+   TO ReportServerData  
+   WITH COPY_ONLY  
+  
+-- Back up the ReportServer log.  
+BACKUP LOG ReportServer  
+   TO ReportServerLog  
+   WITH COPY_ONLY  
+  
+-- To permit log backups, before the full database backup, alter the database   
+-- to use the full recovery model.  
+USE master;  
+GO  
+ALTER DATABASE ReportServerTempdb  
+   SET RECOVERY FULL  
+  
+-- If the ReportServerTempDBData device does not exist yet, create it.   
+USE master  
+GO  
+EXEC sp_addumpdevice 'disk', 'ReportServerTempDBData',   
+'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\BACKUP\ReportServerTempDBData.bak'  
+  
+-- Create a logical backup device, ReportServerTempDBLog.  
+USE master  
+GO  
+EXEC sp_addumpdevice 'disk', 'ReportServerTempDBLog',   
+'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\BACKUP\ReportServerTempDBLog.bak'  
+  
+-- Back up the full ReportServerTempDB database.  
+BACKUP DATABASE ReportServerTempDB  
+   TO ReportServerTempDBData  
+   WITH COPY_ONLY  
+  
+-- Back up the ReportServerTempDB log.  
+BACKUP LOG ReportServerTempDB  
+   TO ReportServerTempDBLog  
+   WITH COPY_ONLY  
+```  
+  
+### Use RESTORE and MOVE to relocate the report server databases  
+ When restoring the databases, be sure to include the MOVE argument so that you can specify a path. Use the `NORECOVERY` argument to perform the initial restore. This argument keeps the database in a `RESTORING` state, giving you time to review log backups to determine which one to restore. The final step repeats the `RESTORE` operation with the `RECOVERY` argument.  
+  
+ The `MOVE` argument uses the logical name of the data file. To find the logical name, execute the following statement: `RESTORE FILELISTONLY FROM DISK='C:\ReportServerData.bak';`.  
+  
+ The following examples include the `FILE` argument so that you can specify the file position of the log file to restore. To find the file position, execute the following statement: `RESTORE HEADERONLY FROM DISK='C:\ReportServerData.bak';`.  
+  
+ When restoring the database and log files, you should run each `RESTORE` operation separately.  
+  
+```  
+-- Restore the report server database and move to new instance folder   
+RESTORE DATABASE ReportServer  
+   FROM DISK='C:\ReportServerData.bak'  
+   WITH NORECOVERY,   
+      MOVE 'ReportServer' TO   
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServer.mdf',   
+      MOVE 'ReportServer_log' TO  
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServer_Log.ldf';  
+GO  
+  
+-- Restore the report server log file to new instance folder   
+RESTORE LOG ReportServer  
+   FROM DISK='C:\ReportServerData.bak'  
+   WITH NORECOVERY, FILE=2  
+      MOVE 'ReportServer' TO   
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServer.mdf',   
+      MOVE 'ReportServer_log' TO  
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServer_Log.ldf';  
+GO  
+  
+-- Restore and move the report server temporary database  
+RESTORE DATABASE ReportServerTempdb  
+   FROM DISK='C:\ReportServerTempDBData.bak'  
+   WITH NORECOVERY,   
+      MOVE 'ReportServerTempDB' TO   
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServerTempDB.mdf',   
+      MOVE 'ReportServerTempDB_log' TO  
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\REportServerTempDB_Log.ldf';  
+GO  
+  
+-- Restore the temporary database log file to new instance folder   
+RESTORE LOG ReportServerTempdb  
+   FROM DISK='C:\ReportServerTempDBData.bak'  
+   WITH NORECOVERY, FILE=2  
+      MOVE 'ReportServerTempDB' TO   
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\ReportServerTempDB.mdf',   
+      MOVE 'ReportServerTempDB_log' TO  
+         'C:\Program Files\Microsoft SQL Server\MSSQL11.MSSQLSERVER\MSSQL\Data\REportServerTempDB_Log.ldf';  
+GO  
+  
+-- Perform final restore  
+RESTORE DATABASE ReportServer  
+   WITH RECOVERY  
+GO  
+  
+-- Perform final restore  
+RESTORE DATABASE ReportServerTempDB  
+   WITH RECOVERY  
+GO  
+```  
+  
+### How to configure the report server database connection  
+  
+1.  Start the [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Configuration Manager and open a connection to the report server.  
+  
+1.  On the **Database** page, select **Change Database**. Choose **Next**.  
+  
+1.  Select **Choose an existing report server database**. Choose **Next**.  
+  
+1.  Select the [!INCLUDE[ssNoVersion](../../includes/ssnoversion-md.md)] that now hosts the report server database and choose **Test Connection**. Select **Next**.  
+  
+1.  In **Database Name**, select the report server database that you want to use. Select **Next**.  
+  
+1.  In **Credentials**, specify the credentials that the report server uses to connect to the report server database. Select **Next**.  
+  
+1.  Select **Next**, and then choose **Finish**.  
+  
+> [!NOTE]  
+>  A [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] installation requires that the [!INCLUDE[ssDEnoversion](../../includes/ssdenoversion-md.md)] instance include the **RSExecRole** role. Role creation, login registration, and role assignments occur when you set the report server database connection through the [!INCLUDE[ssRSnoversion](../../includes/ssrsnoversion-md.md)] Configuration tool. If you use alternate approaches (specifically, if you use the rsconfig.exe command prompt utility) to configure the connection, the report server will not be in a working state. You might have to write WMI code to make the report server available. For more information, see [Access the Reporting Services WMI Provider](../../reporting-services/tools/access-the-reporting-services-wmi-provider.md).  
+
+## Related content
+
+[Create the RSExecRole](../../reporting-services/security/create-the-rsexecrole.md)   
+[Start and stop the report server service](../../reporting-services/report-server/start-and-stop-the-report-server-service.md)   
+[Configure a report server database connection](../../reporting-services/install-windows/configure-a-report-server-database-connection-ssrs-configuration-manager.md)   
+[Configure the unattended execution account](../../reporting-services/install-windows/configure-the-unattended-execution-account-ssrs-configuration-manager.md)   
+[Report Server Configuration Manager](../../reporting-services/install-windows/reporting-services-configuration-manager-native-mode.md)   
+[rsconfig utility](../../reporting-services/tools/rsconfig-utility-ssrs.md)   
+[Configure and manage encryption keys](../../reporting-services/install-windows/ssrs-encryption-keys-manage-encryption-keys.md)   
+[Report server database](../../reporting-services/report-server/report-server-database-ssrs-native-mode.md)  
+
+More questions? [Try asking the Reporting Services forum](https://go.microsoft.com/fwlink/?LinkId=620231)
